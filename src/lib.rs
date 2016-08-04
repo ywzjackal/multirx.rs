@@ -16,28 +16,19 @@ pub struct MultiRx<T>
     where T: std::marker::Send + std::marker::Copy + 'static
 {
     event: Sender<Event<T>>,
-    user_tx: Sender<T>,
 }
 
 impl<T> MultiRx<T>
     where T: std::marker::Send + std::marker::Copy
 {
     /// Create Empty MultiRx Struct
-    pub fn new() -> io::Result<MultiRx<T>> {
+    pub fn new(user_rx: Receiver<T>) -> io::Result<MultiRx<T>> {
         let (event_tx, event_rx) = channel();
-        let (user_tx, user_rx) = channel();
-        let rt = MultiRx {
-            event: event_tx,
-            user_tx: user_tx,
-        };
+        let rt = MultiRx { event: event_tx };
         try!(thread::Builder::new()
             .name("MultiRx Runtime".to_string())
             .spawn(move || runtime(event_rx, user_rx)));
         Ok(rt)
-    }
-    /// Clone an TX handle.
-    pub fn clone_tx(&self) -> Sender<T> {
-        self.user_tx.clone()
     }
     /// Join Channel RX Group.
     pub fn join_rx(&self) -> Result<Receiver<T>, SendError<Event<T>>> {
@@ -58,7 +49,7 @@ fn runtime<T>(rx: Receiver<Event<T>>, user_rx: Receiver<T>)
                     Ok(evt) => {
                         match evt {
                             Event::Exit => {
-                                println!("runtime exit, got exit event.");
+                                //println!("runtime exit, got exit event.");
                                 return;
                             },
                             Event::Join(tx) => {
@@ -80,15 +71,15 @@ fn runtime<T>(rx: Receiver<Event<T>>, user_rx: Receiver<T>)
                         for tx in children.iter() {
                             match tx.send(evt) {
                                 Ok(()) => {index += 1;},
-                                Err(e) => {
+                                Err(_) => {
                                     remove_index.push(index);
-                                    println!("fail to send event to user, sender removed, {:?}", e);
                                 }
                             }
                         }
                         for id in remove_index {
                             children.remove(id);
                         }
+                        //println!("children lease: {}", children.len());
                     },
                     Err(_) => {
                         //println!("fail to recv user event, {:?}", e);
@@ -105,8 +96,8 @@ fn test() {
     use std::sync::Arc;
     use std::time::Duration;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let mrx = MultiRx::new().unwrap();
-    let tx = mrx.clone_tx();
+    let (tx, rx) = channel();
+    let mrx = MultiRx::new(rx).unwrap();
     let counter = Arc::new(AtomicUsize::new(0));
     for i in 0..20 {
         match mrx.join_rx() {
@@ -132,7 +123,8 @@ fn test() {
         }
     }
     tx.send(1).unwrap();
+    thread::sleep(Duration::from_millis(1000));
     tx.send(1).unwrap();
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(1000));
     assert_eq!(counter.load(Ordering::SeqCst), 20);
 }
